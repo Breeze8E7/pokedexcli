@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"os"
 	"strings"
@@ -25,14 +26,6 @@ func cleanInput(text string) []string {
 	trimmed := strings.TrimSpace(lowered)
 	final := strings.Fields(trimmed)
 	return final
-}
-
-func parseFirstWord(text string) string {
-	cleaned := cleanInput(text)
-	if len(cleaned) == 0 {
-		return ""
-	}
-	return cleaned[0]
 }
 
 func commandExit(config *Config, _ []string) error {
@@ -193,6 +186,64 @@ func commandExplore(config *Config, params []string) error {
 	return nil
 }
 
+func commandCatch(config *Config, params []string) error {
+	if len(params) != 1 {
+		return fmt.Errorf("you must provide a pokemon name")
+	}
+	name := params[0]
+	url := "https://pokeapi.co/api/v2/pokemon/" + name
+	var data map[string]interface{}
+	cachedData, found := appCache.Get(url)
+	var body []byte
+	if found {
+		body = cachedData
+	} else {
+		resp, err := http.Get(url)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+		body, err = io.ReadAll(resp.Body)
+		if err != nil {
+			return err
+		}
+		appCache.Add(url, body)
+	}
+	err := json.Unmarshal(body, &data)
+	if err != nil {
+		return err
+	}
+	baseExp, ok := data["base_experience"].(float64)
+	if !ok {
+		return fmt.Errorf("error parsing base experience")
+	}
+	fmt.Printf("Throwing a Pokeball at %s...\n", name)
+	catchDifficulty := int(baseExp)
+	catchRoll := rand.Intn(100)
+	if catchRoll > (90 - catchDifficulty/10) {
+		fmt.Printf("%s escaped!\n", name)
+		return nil
+	}
+	fmt.Printf("%s was caught!\n", name)
+	if config.Caught == nil {
+		config.Caught = make(map[string]bool)
+	}
+	config.Caught[name] = true
+	return nil
+}
+
+func commandList(config *Config, params []string) error {
+	if config.Caught == nil || len(config.Caught) == 0 {
+		fmt.Println("You haven't caught any Pokemon yet!")
+		return nil
+	}
+	fmt.Println("Your caught Pokemon:")
+	for name := range config.Caught {
+		fmt.Printf("  - %s\n", name)
+	}
+	return nil
+}
+
 type cliCommand struct {
 	name        string
 	description string
@@ -225,6 +276,16 @@ func init() {
 			name:        "explore",
 			description: "Displays Pokemon in an area",
 			callback:    commandExplore,
+		},
+		"catch": {
+			name:        "catch",
+			description: "Attempts to catch a Pokemon",
+			callback:    commandCatch,
+		},
+		"list": {
+			name:        "list",
+			description: "Lists all caught Pokemon",
+			callback:    commandList,
 		},
 	}
 }
@@ -269,4 +330,5 @@ type LocationArea struct {
 type Config struct {
 	Next     string
 	Previous string
+	Caught   map[string]bool
 }
